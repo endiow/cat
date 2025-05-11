@@ -4,6 +4,8 @@ import android.content.Intent;
 import android.media.MediaMetadataRetriever;
 import android.net.Uri;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.view.View;
 import android.widget.Button;
 import android.widget.ImageButton;
@@ -13,6 +15,8 @@ import android.widget.Toast;
 import android.widget.VideoView;
 
 import androidx.appcompat.app.AppCompatActivity;
+
+import java.io.File;
 
 /**
  * 视频编辑器活动
@@ -28,6 +32,7 @@ public class VideoEditorActivity extends AppCompatActivity
     private Button btnSave;
     private ImageButton btnAddMusic;
     private ImageButton btnFilter;
+    private View progressOverlay;
 
     private String videoPath;
     private String videoName;
@@ -35,6 +40,9 @@ public class VideoEditorActivity extends AppCompatActivity
     private int startTrimPosition = 0; // 毫秒
     private int endTrimPosition; // 毫秒
     private boolean isPlaying = false;
+    
+    private Handler handler;
+    private Runnable updateTimeRunnable;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) 
@@ -42,10 +50,21 @@ public class VideoEditorActivity extends AppCompatActivity
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_video_editor);
 
+        // 初始化Handler用于定时更新时间
+        handler = new Handler(Looper.getMainLooper());
+        
         // 获取传递过来的视频信息
         videoPath = getIntent().getStringExtra("video_path");
         videoName = getIntent().getStringExtra("video_name");
         videoDuration = getIntent().getIntExtra("video_duration", 0);
+        
+        // 检查文件是否存在
+        if (videoPath == null || !new File(videoPath).exists()) 
+        {
+            Toast.makeText(this, "视频文件不存在", Toast.LENGTH_SHORT).show();
+            finish();
+            return;
+        }
 
         if (videoDuration == 0) 
         {
@@ -55,12 +74,22 @@ public class VideoEditorActivity extends AppCompatActivity
                 MediaMetadataRetriever retriever = new MediaMetadataRetriever();
                 retriever.setDataSource(videoPath);
                 String time = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION);
-                videoDuration = Integer.parseInt(time);
+                if (time != null) 
+                {
+                    videoDuration = Integer.parseInt(time);
+                } 
+                else 
+                {
+                    // 如果仍然无法获取时长，设置一个默认值
+                    videoDuration = 60000; // 1分钟
+                }
                 retriever.release();
             } 
             catch (Exception e) 
             {
                 e.printStackTrace();
+                // 设置默认时长
+                videoDuration = 60000; // 1分钟
             }
         }
 
@@ -71,6 +100,20 @@ public class VideoEditorActivity extends AppCompatActivity
         setupVideoPlayer();
         setupTrimControls();
         setupActionButtons();
+        
+        // 创建更新时间的Runnable
+        updateTimeRunnable = new Runnable() 
+        {
+            @Override
+            public void run() 
+            {
+                if (videoView != null && videoView.isPlaying()) 
+                {
+                    updateTimeDisplay();
+                }
+                handler.postDelayed(this, 500); // 每500毫秒更新一次
+            }
+        };
     }
 
     private void initViews() 
@@ -84,35 +127,51 @@ public class VideoEditorActivity extends AppCompatActivity
         btnSave = findViewById(R.id.btn_save);
         btnAddMusic = findViewById(R.id.btn_add_music);
         btnFilter = findViewById(R.id.btn_filter);
+        progressOverlay = findViewById(R.id.progress_overlay);
     }
 
     private void setupVideoPlayer() 
     {
-        // 设置视频源
-        videoView.setVideoPath(videoPath);
-        
-        // 设置媒体控制器
-        videoView.setOnPreparedListener(mp -> 
+        try 
         {
-            // 设置视频进度更新监听
-            mp.setOnSeekCompleteListener(mp1 -> 
+            // 设置视频源
+            videoView.setVideoPath(videoPath);
+            
+            // 设置媒体控制器
+            videoView.setOnPreparedListener(mp -> 
             {
-                if (isPlaying) 
+                // 设置视频进度更新监听
+                mp.setOnSeekCompleteListener(mp1 -> 
                 {
-                    videoView.start();
-                }
+                    if (isPlaying) 
+                    {
+                        videoView.start();
+                    }
+                });
             });
-        });
-        
-        // 监听播放完成
-        videoView.setOnCompletionListener(mp -> 
+            
+            // 监听播放完成
+            videoView.setOnCompletionListener(mp -> 
+            {
+                btnPlay.setText("播放");
+                isPlaying = false;
+            });
+            
+            // 设置错误监听
+            videoView.setOnErrorListener((mp, what, extra) -> 
+            {
+                Toast.makeText(VideoEditorActivity.this, "视频播放错误", Toast.LENGTH_SHORT).show();
+                return true;
+            });
+            
+            // 准备播放
+            videoView.requestFocus();
+        } 
+        catch (Exception e) 
         {
-            btnPlay.setText("播放");
-            isPlaying = false;
-        });
-        
-        // 准备播放
-        videoView.requestFocus();
+            e.printStackTrace();
+            Toast.makeText(this, "无法播放视频: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+        }
     }
 
     private void setupTrimControls() 
@@ -136,7 +195,14 @@ public class VideoEditorActivity extends AppCompatActivity
                     updateTimeDisplay();
                     
                     // 更新视频当前位置
-                    videoView.seekTo(progress);
+                    try 
+                    {
+                        videoView.seekTo(progress);
+                    } 
+                    catch (Exception e) 
+                    {
+                        e.printStackTrace();
+                    }
                 }
             }
 
@@ -165,17 +231,27 @@ public class VideoEditorActivity extends AppCompatActivity
         // 播放/暂停按钮
         btnPlay.setOnClickListener(v -> 
         {
-            if (isPlaying) 
+            try 
             {
-                videoView.pause();
-                btnPlay.setText("播放");
-                isPlaying = false;
+                if (isPlaying) 
+                {
+                    videoView.pause();
+                    btnPlay.setText("播放");
+                    isPlaying = false;
+                    handler.removeCallbacks(updateTimeRunnable);
+                } 
+                else 
+                {
+                    videoView.start();
+                    btnPlay.setText("暂停");
+                    isPlaying = true;
+                    handler.post(updateTimeRunnable);
+                }
             } 
-            else 
+            catch (Exception e) 
             {
-                videoView.start();
-                btnPlay.setText("暂停");
-                isPlaying = true;
+                e.printStackTrace();
+                Toast.makeText(this, "播放操作失败", Toast.LENGTH_SHORT).show();
             }
         });
         
@@ -211,7 +287,15 @@ public class VideoEditorActivity extends AppCompatActivity
         // 格式化并显示开始和结束时间
         tvStartTime.setText(formatTime(startTrimPosition));
         tvEndTime.setText(formatTime(endTrimPosition));
-        tvCurrentTime.setText(formatTime(videoView.getCurrentPosition()));
+        
+        try 
+        {
+            tvCurrentTime.setText(formatTime(videoView.getCurrentPosition()));
+        } 
+        catch (Exception e) 
+        {
+            e.printStackTrace();
+        }
     }
 
     private String formatTime(int timeMs) 
@@ -225,7 +309,7 @@ public class VideoEditorActivity extends AppCompatActivity
     {
         // 在实际应用中，这里应该使用FFmpeg或MediaCodec进行视频处理
         // 为简化示例，这里仅模拟一个延迟操作
-        findViewById(R.id.progress_overlay).setVisibility(View.VISIBLE);
+        progressOverlay.setVisibility(View.VISIBLE);
         
         new Thread(() -> 
         {
@@ -237,7 +321,7 @@ public class VideoEditorActivity extends AppCompatActivity
                 // 返回主线程更新UI
                 runOnUiThread(() -> 
                 {
-                    findViewById(R.id.progress_overlay).setVisibility(View.GONE);
+                    progressOverlay.setVisibility(View.GONE);
                     Toast.makeText(this, "视频保存成功！", Toast.LENGTH_SHORT).show();
                     
                     // 返回主界面
@@ -250,10 +334,25 @@ public class VideoEditorActivity extends AppCompatActivity
             catch (InterruptedException e) 
             {
                 e.printStackTrace();
+                runOnUiThread(() -> 
+                {
+                    progressOverlay.setVisibility(View.GONE);
+                    Toast.makeText(this, "处理视频时出错", Toast.LENGTH_SHORT).show();
+                });
             }
         }).start();
     }
 
+    @Override
+    protected void onResume() 
+    {
+        super.onResume();
+        if (isPlaying) 
+        {
+            handler.post(updateTimeRunnable);
+        }
+    }
+    
     @Override
     protected void onPause() 
     {
@@ -264,6 +363,7 @@ public class VideoEditorActivity extends AppCompatActivity
             isPlaying = false;
             btnPlay.setText("播放");
         }
+        handler.removeCallbacks(updateTimeRunnable);
     }
 
     @Override
@@ -274,5 +374,6 @@ public class VideoEditorActivity extends AppCompatActivity
         {
             videoView.stopPlayback();
         }
+        handler.removeCallbacks(updateTimeRunnable);
     }
 } 

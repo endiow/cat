@@ -3,7 +3,6 @@ package com.example.ccat;
 import android.content.Intent;
 import android.os.Bundle;
 import android.view.View;
-import android.widget.Button;
 import android.widget.ListView;
 import android.widget.TextView;
 
@@ -13,12 +12,14 @@ import androidx.core.graphics.Insets;
 import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowInsetsCompat;
 
+import com.google.android.material.floatingactionbutton.FloatingActionButton;
+
 import java.util.ArrayList;
 
 public class MainActivity extends AppCompatActivity {
 
     private ListView projectListView;
-    private Button newProjectButton;
+    private FloatingActionButton newProjectButton;
     private ArrayList<VideoProject> projectList;
     private ProjectAdapter projectAdapter;
 

@@ -5,12 +5,17 @@ import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.database.Cursor;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
+import android.os.Environment;
 import android.provider.MediaStore;
+import android.provider.Settings;
 import android.view.View;
 import android.widget.Toast;
 
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
+import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
@@ -26,6 +31,7 @@ import java.util.List;
 public class VideoPickerActivity extends AppCompatActivity implements VideoGalleryAdapter.OnVideoClickListener 
 {
     private static final int PERMISSION_REQUEST_CODE = 1001;
+    private static final int MANAGE_EXTERNAL_STORAGE_REQUEST_CODE = 1002;
     private static final String[] REQUIRED_PERMISSIONS = {
             Manifest.permission.READ_EXTERNAL_STORAGE,
             Manifest.permission.WRITE_EXTERNAL_STORAGE
@@ -64,19 +70,68 @@ public class VideoPickerActivity extends AppCompatActivity implements VideoGalle
 
     private boolean checkPermissions() 
     {
-        for (String permission : REQUIRED_PERMISSIONS) 
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) 
         {
-            if (ContextCompat.checkSelfPermission(this, permission) != PackageManager.PERMISSION_GRANTED) 
+            // Android 11及以上版本使用MANAGE_EXTERNAL_STORAGE权限
+            return Environment.isExternalStorageManager();
+        } 
+        else 
+        {
+            // Android 10及以下版本使用传统权限
+            for (String permission : REQUIRED_PERMISSIONS) 
             {
-                return false;
+                if (ContextCompat.checkSelfPermission(this, permission) != PackageManager.PERMISSION_GRANTED) 
+                {
+                    return false;
+                }
             }
+            return true;
         }
-        return true;
     }
 
     private void requestPermissions() 
     {
-        ActivityCompat.requestPermissions(this, REQUIRED_PERMISSIONS, PERMISSION_REQUEST_CODE);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) 
+        {
+            // Android 11及以上，请求MANAGE_EXTERNAL_STORAGE权限
+            try 
+            {
+                Intent intent = new Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION);
+                intent.addCategory("android.intent.category.DEFAULT");
+                intent.setData(Uri.parse("package:" + getPackageName()));
+                startActivityForResult(intent, MANAGE_EXTERNAL_STORAGE_REQUEST_CODE);
+            } 
+            catch (Exception e) 
+            {
+                // 如果上面的方法失败，打开通用设置页面
+                Intent intent = new Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION);
+                startActivityForResult(intent, MANAGE_EXTERNAL_STORAGE_REQUEST_CODE);
+            }
+        } 
+        else 
+        {
+            // Android 10及以下，使用常规权限请求
+            ActivityCompat.requestPermissions(this, REQUIRED_PERMISSIONS, PERMISSION_REQUEST_CODE);
+        }
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, @Nullable Intent data) 
+    {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == MANAGE_EXTERNAL_STORAGE_REQUEST_CODE) 
+        {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && Environment.isExternalStorageManager()) 
+            {
+                // 权限已授予
+                loadVideos();
+            } 
+            else 
+            {
+                // 用户拒绝了权限
+                showPermissionDeniedDialog();
+            }
+        }
     }
 
     @Override
@@ -101,10 +156,28 @@ public class VideoPickerActivity extends AppCompatActivity implements VideoGalle
             } 
             else 
             {
-                Toast.makeText(this, "需要存储权限来访问视频", Toast.LENGTH_SHORT).show();
-                finish();
+                showPermissionDeniedDialog();
             }
         }
+    }
+
+    private void showPermissionDeniedDialog() 
+    {
+        new AlertDialog.Builder(this)
+                .setTitle("需要存储权限")
+                .setMessage("该应用需要存储权限来访问视频文件。请在设置中授予权限。")
+                .setPositiveButton("设置", (dialog, which) -> 
+                {
+                    // 跳转到应用设置页面
+                    Intent intent = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS);
+                    Uri uri = Uri.fromParts("package", getPackageName(), null);
+                    intent.setData(uri);
+                    startActivity(intent);
+                    finish();
+                })
+                .setNegativeButton("取消", (dialog, which) -> finish())
+                .setCancelable(false)
+                .show();
     }
 
     private void loadVideos() 
@@ -141,6 +214,11 @@ public class VideoPickerActivity extends AppCompatActivity implements VideoGalle
                     videoList.add(videoItem);
                 }
                 adapter.notifyDataSetChanged();
+                
+                if (videoList.isEmpty()) 
+                {
+                    Toast.makeText(this, "未找到视频文件", Toast.LENGTH_SHORT).show();
+                }
             }
         } 
         catch (Exception e) 

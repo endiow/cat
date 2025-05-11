@@ -12,6 +12,11 @@ import android.widget.TextView;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
+import com.bumptech.glide.Glide;
+import com.bumptech.glide.load.engine.DiskCacheStrategy;
+import com.bumptech.glide.request.RequestOptions;
+
+import java.io.File;
 import java.util.ArrayList;
 
 /**
@@ -59,8 +64,21 @@ public class ProjectAdapter extends ArrayAdapter<VideoProject>
             // 设置缩略图（如果有）
             if (project.getThumbnailPath() != null && !project.getThumbnailPath().isEmpty()) 
             {
-                // 在实际应用中，这里应该使用图片加载库如Glide或Picasso
-                // Glide.with(context).load(project.getThumbnailPath()).into(thumbnailView);
+                // 使用Glide加载缩略图
+                RequestOptions options = new RequestOptions()
+                        .centerCrop()
+                        .diskCacheStrategy(DiskCacheStrategy.ALL)
+                        .placeholder(R.drawable.ic_video_placeholder);
+                
+                Glide.with(context)
+                     .load(new File(project.getThumbnailPath()))
+                     .apply(options)
+                     .into(thumbnailView);
+            }
+            else 
+            {
+                // 使用默认图标
+                thumbnailView.setImageResource(R.drawable.ic_video_placeholder);
             }
         }
 
