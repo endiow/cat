@@ -1,4 +1,4 @@
-package com.example.cat;
+package com.example.ccat;
 
 import org.junit.Test;
 
