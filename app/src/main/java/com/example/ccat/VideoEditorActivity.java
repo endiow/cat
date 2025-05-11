@@ -1,11 +1,15 @@
 package com.example.ccat;
 
+import android.content.BroadcastReceiver;
+import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.media.MediaMetadataRetriever;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.util.Log;
 import android.view.View;
 import android.widget.Button;
 import android.widget.ImageButton;
@@ -14,7 +18,10 @@ import android.widget.TextView;
 import android.widget.Toast;
 import android.widget.VideoView;
 
+import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
+
+import com.example.ccat.services.VideoProcessingService;
 
 import java.io.File;
 
@@ -23,6 +30,8 @@ import java.io.File;
  */
 public class VideoEditorActivity extends AppCompatActivity 
 {
+    private static final String TAG = "VideoEditorActivity";
+    
     private VideoView videoView;
     private SeekBar seekBarTrim;
     private TextView tvStartTime;
@@ -36,13 +45,33 @@ public class VideoEditorActivity extends AppCompatActivity
 
     private String videoPath;
     private String videoName;
-    private int videoDuration; // 毫秒
-    private int startTrimPosition = 0; // 毫秒
-    private int endTrimPosition; // 毫秒
+    private long videoDuration; // 毫秒
+    private long startTrimPosition = 0L; // 毫秒
+    private long endTrimPosition; // 毫秒
     private boolean isPlaying = false;
     
     private Handler handler;
     private Runnable updateTimeRunnable;
+    
+    // 广播接收器，接收视频处理结果
+    private BroadcastReceiver videoProcessedReceiver = new BroadcastReceiver() 
+    {
+        @Override
+        public void onReceive(Context context, Intent intent) 
+        {
+            boolean success = intent.getBooleanExtra("success", false);
+            if (success) 
+            {
+                String outputPath = intent.getStringExtra("output_path");
+                onVideoProcessingSuccess(outputPath);
+            } 
+            else 
+            {
+                String error = intent.getStringExtra("error");
+                onVideoProcessingFailed(error);
+            }
+        }
+    };
 
     @Override
     protected void onCreate(Bundle savedInstanceState) 
@@ -56,7 +85,7 @@ public class VideoEditorActivity extends AppCompatActivity
         // 获取传递过来的视频信息
         videoPath = getIntent().getStringExtra("video_path");
         videoName = getIntent().getStringExtra("video_name");
-        videoDuration = getIntent().getIntExtra("video_duration", 0);
+        videoDuration = getIntent().getLongExtra("video_duration", 0);
         
         // 检查文件是否存在
         if (videoPath == null || !new File(videoPath).exists()) 
@@ -76,30 +105,38 @@ public class VideoEditorActivity extends AppCompatActivity
                 String time = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION);
                 if (time != null) 
                 {
-                    videoDuration = Integer.parseInt(time);
+                    videoDuration = Long.parseLong(time);
+                    Log.d(TAG, "从MediaMetadataRetriever获取视频时长: " + videoDuration + "ms");
                 } 
                 else 
                 {
                     // 如果仍然无法获取时长，设置一个默认值
-                    videoDuration = 60000; // 1分钟
+                    videoDuration = 60000L; // 1分钟
+                    Log.w(TAG, "无法获取视频时长，使用默认值: " + videoDuration + "ms");
                 }
                 retriever.release();
             } 
             catch (Exception e) 
             {
-                e.printStackTrace();
+                Log.e(TAG, "读取视频时长失败", e);
                 // 设置默认时长
-                videoDuration = 60000; // 1分钟
+                videoDuration = 60000L; // 1分钟
             }
         }
 
         // 设置结束位置为视频时长
         endTrimPosition = videoDuration;
+        
+        Log.d(TAG, "初始化视频编辑器: 路径=" + videoPath + ", 名称=" + videoName + ", 时长=" + videoDuration + "ms");
 
         initViews();
         setupVideoPlayer();
         setupTrimControls();
         setupActionButtons();
+        
+        // 注册广播接收器
+        IntentFilter filter = new IntentFilter("com.example.ccat.VIDEO_PROCESSED");
+        registerReceiver(videoProcessedReceiver, filter);
         
         // 创建更新时间的Runnable
         updateTimeRunnable = new Runnable() 
@@ -177,13 +214,85 @@ public class VideoEditorActivity extends AppCompatActivity
     private void setupTrimControls() 
     {
         // 设置裁剪进度条
-        seekBarTrim.setMax(videoDuration);
-        seekBarTrim.setProgress(endTrimPosition);
+        // 注意：SeekBar只接受int类型的最大值，所以需要转换
+        // 对于超过Integer.MAX_VALUE的视频，需要考虑缩放
+        int maxProgress;
+        if (videoDuration > Integer.MAX_VALUE) {
+            maxProgress = Integer.MAX_VALUE;
+            Log.w("VideoEditorActivity", "视频时长超过了进度条最大值，将进行缩放");
+        } else {
+            maxProgress = (int) videoDuration;
+        }
+        
+        seekBarTrim.setMax(maxProgress);
+        seekBarTrim.setProgress((int) endTrimPosition);
         
         // 显示起始和结束时间
         updateTimeDisplay();
         
-        // 设置进度条变化监听
+        // 增加额外的SeekBar，用于调整视频起始位置
+        SeekBar seekBarStart = findViewById(R.id.seek_bar_start);
+        if (seekBarStart != null) {
+            seekBarStart.setMax(maxProgress);
+            seekBarStart.setProgress((int) startTrimPosition);
+            
+            seekBarStart.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() 
+            {
+                @Override
+                public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) 
+                {
+                    if (fromUser) 
+                    {
+                        // 确保起始位置不超过结束位置
+                        if (progress < endTrimPosition - 500) 
+                        {
+                            startTrimPosition = progress;
+                        } 
+                        else 
+                        {
+                            // 如果起始位置太接近结束位置，保持至少0.5秒的间隔
+                            startTrimPosition = endTrimPosition - 500;
+                            seekBar.setProgress((int) startTrimPosition);
+                        }
+                        
+                        updateTimeDisplay();
+                        
+                        // 更新视频当前位置
+                        try 
+                        {
+                            // 安全处理seekTo调用 - int参数限制
+                            int safePosition = (int) Math.min(Integer.MAX_VALUE, startTrimPosition);
+                            videoView.seekTo(safePosition);
+                            Log.d(TAG, "seekTo位置: " + safePosition + "ms");
+                        } 
+                        catch (Exception e) 
+                        {
+                            Log.e(TAG, "seekTo失败", e);
+                        }
+                    }
+                }
+
+                @Override
+                public void onStartTrackingTouch(SeekBar seekBar) 
+                {
+                    if (isPlaying) 
+                    {
+                        videoView.pause();
+                    }
+                }
+
+                @Override
+                public void onStopTrackingTouch(SeekBar seekBar) 
+                {
+                    if (isPlaying) 
+                    {
+                        videoView.start();
+                    }
+                }
+            });
+        }
+        
+        // 设置结束位置进度条变化监听
         seekBarTrim.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() 
         {
             @Override
@@ -191,17 +300,31 @@ public class VideoEditorActivity extends AppCompatActivity
             {
                 if (fromUser) 
                 {
-                    endTrimPosition = progress;
+                    // 确保结束位置大于起始位置
+                    if (progress > startTrimPosition + 500) 
+                    {
+                        endTrimPosition = progress;
+                    } 
+                    else 
+                    {
+                        // 如果结束位置太接近起始位置，保持至少0.5秒的间隔
+                        endTrimPosition = startTrimPosition + 500;
+                        seekBar.setProgress((int) endTrimPosition);
+                    }
+                    
                     updateTimeDisplay();
                     
                     // 更新视频当前位置
                     try 
                     {
-                        videoView.seekTo(progress);
+                        // 安全处理seekTo调用 - int参数限制
+                        int safePosition = (int) Math.min(Integer.MAX_VALUE, progress);
+                        videoView.seekTo(safePosition);
+                        Log.d(TAG, "seekTo位置: " + safePosition + "ms");
                     } 
                     catch (Exception e) 
                     {
-                        e.printStackTrace();
+                        Log.e(TAG, "seekTo失败", e);
                     }
                 }
             }
@@ -258,10 +381,7 @@ public class VideoEditorActivity extends AppCompatActivity
         // 保存按钮
         btnSave.setOnClickListener(v -> 
         {
-            Toast.makeText(this, "正在处理视频...", Toast.LENGTH_SHORT).show();
-            // 实际应用中，这里需要启动后台服务来处理视频
-            // 为简化示例，这里仅显示一个提示
-            saveEditedVideo();
+            showSaveOptionsDialog();
         });
         
         // 添加音乐按钮
@@ -298,49 +418,138 @@ public class VideoEditorActivity extends AppCompatActivity
         }
     }
 
-    private String formatTime(int timeMs) 
+    private String formatTime(long timeMs) 
     {
-        int seconds = (timeMs / 1000) % 60;
-        int minutes = (timeMs / (1000 * 60)) % 60;
+        int seconds = (int) (timeMs / 1000) % 60;
+        int minutes = (int) ((timeMs / (1000 * 60)) % 60);
         return String.format("%02d:%02d", minutes, seconds);
     }
 
-    private void saveEditedVideo() 
+    /**
+     * 显示保存选项对话框
+     */
+    private void showSaveOptionsDialog() 
     {
-        // 在实际应用中，这里应该使用FFmpeg或MediaCodec进行视频处理
-        // 为简化示例，这里仅模拟一个延迟操作
+        new AlertDialog.Builder(this)
+                .setTitle("保存视频")
+                .setItems(new String[]{"裁剪视频", "应用滤镜", "取消"}, (dialog, which) -> 
+                {
+                    switch (which) 
+                    {
+                        case 0: // 裁剪视频
+                            trimVideo();
+                            break;
+                            
+                        case 1: // 应用滤镜
+                            Toast.makeText(this, "滤镜功能开发中...", Toast.LENGTH_SHORT).show();
+                            break;
+                            
+                        case 2: // 取消
+                            dialog.dismiss();
+                            break;
+                    }
+                })
+                .show();
+    }
+    
+    /**
+     * 开始裁剪视频
+     */
+    private void trimVideo() 
+    {
+        // 确保结束时间大于起始时间且有效
+        if (endTrimPosition <= startTrimPosition) 
+        {
+            Toast.makeText(this, "无效的时间范围：结束时间必须大于开始时间", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        
+        // 确保剪切范围不是0
+        if (endTrimPosition - startTrimPosition < 500) 
+        {
+            Toast.makeText(this, "剪切范围太短，请选择至少0.5秒的视频片段", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        
+        // 确保不超出视频实际时长
+        if (endTrimPosition > videoDuration) 
+        {
+            Toast.makeText(this, "结束时间超出视频长度", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        // 暂停播放
+        if (isPlaying) 
+        {
+            videoView.pause();
+            btnPlay.setText("播放");
+            isPlaying = false;
+            handler.removeCallbacks(updateTimeRunnable);
+        }
+        
+        // 显示进度覆盖层
         progressOverlay.setVisibility(View.VISIBLE);
         
-        new Thread(() -> 
-        {
-            try 
-            {
-                // 模拟处理延迟
-                Thread.sleep(2000);
-                
-                // 返回主线程更新UI
-                runOnUiThread(() -> 
+        // 日志输出调试信息
+        Log.d("VideoEditorActivity", "开始裁剪视频: " + 
+              "起始=" + startTrimPosition + "ms, " + 
+              "结束=" + endTrimPosition + "ms, " +
+              "总时长=" + videoDuration + "ms");
+        
+        // 启动处理服务
+        Intent intent = new Intent(this, VideoProcessingService.class);
+        intent.setAction(VideoProcessingService.ACTION_TRIM_VIDEO);
+        intent.putExtra(VideoProcessingService.EXTRA_SOURCE_PATH, videoPath);
+        intent.putExtra(VideoProcessingService.EXTRA_START_TIME, (long) startTrimPosition);
+        intent.putExtra(VideoProcessingService.EXTRA_END_TIME, (long) endTrimPosition);
+        startService(intent);
+    }
+    
+    /**
+     * 视频处理成功回调
+     */
+    private void onVideoProcessingSuccess(String outputPath) 
+    {
+        // 隐藏进度覆盖层
+        progressOverlay.setVisibility(View.GONE);
+        
+        // 显示成功对话框
+        new AlertDialog.Builder(this)
+                .setTitle("处理成功")
+                .setMessage("视频已保存到：" + outputPath)
+                .setPositiveButton("返回首页", (dialog, which) -> 
                 {
-                    progressOverlay.setVisibility(View.GONE);
-                    Toast.makeText(this, "视频保存成功！", Toast.LENGTH_SHORT).show();
-                    
                     // 返回主界面
                     Intent intent = new Intent(this, MainActivity.class);
                     intent.setFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP);
                     startActivity(intent);
                     finish();
-                });
-            } 
-            catch (InterruptedException e) 
-            {
-                e.printStackTrace();
-                runOnUiThread(() -> 
+                })
+                .setNegativeButton("继续编辑", (dialog, which) -> 
                 {
-                    progressOverlay.setVisibility(View.GONE);
-                    Toast.makeText(this, "处理视频时出错", Toast.LENGTH_SHORT).show();
-                });
-            }
-        }).start();
+                    // 重新加载当前视频或加载新的处理结果
+                    videoPath = outputPath;
+                    setupVideoPlayer();
+                    dialog.dismiss();
+                })
+                .setCancelable(false)
+                .show();
+    }
+    
+    /**
+     * 视频处理失败回调
+     */
+    private void onVideoProcessingFailed(String error) 
+    {
+        // 隐藏进度覆盖层
+        progressOverlay.setVisibility(View.GONE);
+        
+        // 显示错误对话框
+        new AlertDialog.Builder(this)
+                .setTitle("处理失败")
+                .setMessage("原因：" + error)
+                .setPositiveButton("确定", (dialog, which) -> dialog.dismiss())
+                .show();
     }
 
     @Override
@@ -375,5 +584,15 @@ public class VideoEditorActivity extends AppCompatActivity
             videoView.stopPlayback();
         }
         handler.removeCallbacks(updateTimeRunnable);
+        
+        // 注销广播接收器
+        try 
+        {
+            unregisterReceiver(videoProcessedReceiver);
+        } 
+        catch (Exception e) 
+        {
+            e.printStackTrace();
+        }
     }
 } 

@@ -64,30 +64,71 @@
         android:layout_marginStart="16dp"
         android:layout_marginTop="16dp"
         android:layout_marginEnd="16dp"
-        android:orientation="horizontal"
+        android:orientation="vertical"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toBottomOf="@+id/tv_current_time">
 
-        <TextView
-            android:id="@+id/tv_start_time"
-            android:layout_width="wrap_content"
+        <!-- 起始位置拖动条 -->
+        <LinearLayout
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="00:00"
-            android:textColor="@android:color/white" />
+            android:orientation="horizontal"
+            android:layout_marginBottom="8dp">
 
-        <SeekBar
-            android:id="@+id/seek_bar_trim"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1" />
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="起始位置:"
+                android:textColor="@android:color/white"
+                android:layout_marginEnd="8dp" />
 
-        <TextView
-            android:id="@+id/tv_end_time"
-            android:layout_width="wrap_content"
+            <TextView
+                android:id="@+id/tv_start_time"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="00:00"
+                android:textColor="@android:color/white" />
+
+            <SeekBar
+                android:id="@+id/seek_bar_start"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:progressTint="#4CAF50"
+                android:thumbTint="#4CAF50" />
+
+        </LinearLayout>
+
+        <!-- 结束位置拖动条 -->
+        <LinearLayout
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="00:00"
-            android:textColor="@android:color/white" />
+            android:orientation="horizontal">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="结束位置:"
+                android:textColor="@android:color/white"
+                android:layout_marginEnd="8dp" />
+
+            <TextView
+                android:id="@+id/tv_end_time"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="00:00"
+                android:textColor="@android:color/white" />
+
+            <SeekBar
+                android:id="@+id/seek_bar_trim"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:progressTint="#FF5722"
+                android:thumbTint="#FF5722" />
+
+        </LinearLayout>
 
     </LinearLayout>
 

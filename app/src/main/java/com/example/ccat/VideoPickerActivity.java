@@ -235,7 +235,7 @@ public class VideoPickerActivity extends AppCompatActivity implements VideoGalle
         Intent intent = new Intent(this, VideoEditorActivity.class);
         intent.putExtra("video_path", video.getPath());
         intent.putExtra("video_name", video.getName());
-        intent.putExtra("video_duration", video.getDuration());
+        intent.putExtra("video_duration", (long) video.getDuration());
         startActivity(intent);
         finish();
     }

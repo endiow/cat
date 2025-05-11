@@ -9,9 +9,9 @@ public class VideoItem
     private String name;
     private String path;
     private String uri;
-    private int duration; // 单位：毫秒
+    private long duration; // 单位：毫秒，改为long类型
 
-    public VideoItem(long id, String name, String path, String uri, int duration) 
+    public VideoItem(long id, String name, String path, String uri, long duration) 
     {
         this.id = id;
         this.name = name;
@@ -40,7 +40,7 @@ public class VideoItem
         return uri;
     }
 
-    public int getDuration() 
+    public long getDuration() 
     {
         return duration;
     }
